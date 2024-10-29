@@ -45,23 +45,32 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 	// fmt.Printf("十六进制格式: %x\n", request[8:12])
-
-
-
 	// 准备响应
 	correlationID := binary.BigEndian.Uint32(request[8:12]) // 从偏移量 8 开始提取 4 字节的关联 ID
+	request_api_version := binary.BigEndian.Uint16( request[4:6] )
 	messageSize := int32(4) // 消息大小（仅头部，没有主体）
+	// error codes
+	error_code := 0
+	if request_api_version == 0 || request_api_version == 1 || request_api_version == 2 || request_api_version == 3 || request_api_version ==4 {
+		fmt.Println("API Version is supported."+string(error_code))
+	} else {
+		error_code = 35
+	}
 
 	// 创建响应缓冲区
-	response := make([]byte, 8) // 4 字节消息大小 + 4 字节关联 ID
+	response := make([]byte, 10) // 4 字节消息大小 + 4 字节关联 ID 
 
 	// 以大端顺序写入消息大小
 	binary.BigEndian.PutUint32(response[0:4], uint32(messageSize))
 	// 以大端顺序写入关联 ID
 	binary.BigEndian.PutUint32(response[4:8], uint32(correlationID))
+	binary.BigEndian.PutUint16(response[8:10], uint16(error_code))
+
 
 	// 将响应发送回客户端
 	if _, err := conn.Write(response); err != nil {
 		fmt.Println("写入响应时出错：", err.Error())
 	}
 }
+
+
