@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"encoding/binary"
+	"bytes"
 )
 
 var _ = net.Listen
@@ -32,66 +33,61 @@ func main() {
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
+	for {
+		// read the request message
+		request := make([]byte, 512) 
+		_, err := conn.Read(request) // n表示实际读取的字节数 n stands for the number of actually read bytes
+		if err != nil {
+			fmt.Println("读取请求时出错：", err.Error())
+			return
+		}
+		
+		response := createResponse(request) 
 
-	// read the request message
-	request := make([]byte, 512) 
-	n, err := conn.Read(request) // n表示实际读取的字节数 n stands for the number of actually read bytes
-	if err != nil {
-		fmt.Println("读取请求时出错：", err.Error())
-		return
-	}
-	// fmt.Printf("十六进制格式: %x\n", request[8:12])
-
-	// 准备响应 response
-	messageSize := binary.BigEndian.Uint32( request[0:4] ) // request message size
-	if messageSize < 4 {
-		fmt.Println("请求消息大小不正确")
-		return
-	}
-	// Check if the received data is complete
-	if n < int(messageSize) {
-		fmt.Println("接收到的数据不完整")
-		return
-	}
-
-	request_api_key := binary.BigEndian.Uint16( request[4:6] ) 		// api_key : api version
-	request_api_version := binary.BigEndian.Uint16( request[6:8] )	// api_version 
-	correlationID := binary.BigEndian.Uint32(request[8:12]) 		// extract correlation id
-	// error codes
-	error_code := 0
-	if request_api_version != 0 && request_api_version != 1 && request_api_version != 2 && request_api_version != 3 && request_api_version != 4 {
-		error_code = 35
-	}
-
-	// filling response slice
-	response := make([]byte, 23) 
-
-	binary.BigEndian.PutUint32(response[0:4], 19 ) 	// response message size
-	binary.BigEndian.PutUint32(response[4:8], uint32(correlationID))
-	binary.BigEndian.PutUint16(response[8:10], uint16(error_code)) 
-	/*
-	   Breakdown:
-	       - First Byte: #apikeys +1 -> 2
-	       - Next two bytes: API key; supposed to be 18 according to spec -> 0, 18
-	       - Next two bytes: min version; supposed to be 0 -> 0, 0
-	       - Next two bytes: max version; supposed to be 4 -> 0, 4
-	       - Next byte: TAG_BUFFER -> 0
-	       - Next four bytes: throttle_time_ms -> 0, 0, 0, 0
-	       - Final byte: TAG_BUFFER -> 0
-	*/
-	response[10] = 2                              								// Number of API keys
-	binary.BigEndian.PutUint16(response[11:13], uint16(request_api_key))  		// API Key 1 - API_VERSIONS
-	binary.BigEndian.PutUint16(response[13:15], 0 )  							// min_version
-	binary.BigEndian.PutUint16(response[15:17], 4 ) 							// max_version
-	response[17] = 0  // tagged_fields
-	binary.BigEndian.PutUint32(response[18:22], 0 ) // throttle_time_ms
-	response[22] = 0	// TAG_BUFFER
-	 
-
-	// send the response to the cliend
-	if _, err := conn.Write(response); err != nil {
-		fmt.Println("Error while writing: ", err.Error())
+		// send the response to the cliend
+		if _, err := conn.Write(response); err != nil {
+			fmt.Println("Error while writing: ", err.Error())
+		}
 	}
 }
 
+/*
+	message length => 4 bytes
+	correlation ID => 4 bytes
+	error code => 2 bytes
 
+	#apikeys +1 -> 2 => 1 byte
+	apikey (18)		 => 2 bytes  0, 18
+	MinVersion for ApiKey 18 (v0) => 2 bytes 0, 0
+	MaxVersion for ApiKey 18 (v4) => 2 bytes 0, 4
+	Tag Buffer(tagged_fields) 	=> 1 byte 0 
+	throttle_time_ms			=> 4 bytes 0, 0, 0, 0
+	Tag Buffer => 1 byte 0
+*/
+func createResponse( req []byte ) []byte {
+	requestHeader := req[4:]
+    response := make([]byte, 0) // 创建一个空的切片 response := bytes.NewBuffer([]byte{})
+
+    response = append(response, []byte{0, 0, 0, 19}...) 	// mssgSize
+    response = append(response, requestHeader[4:8]...)      // corrId
+    var apiVersion int16
+    err := binary.Read(bytes.NewReader(requestHeader[2:4]), binary.BigEndian, &apiVersion)
+    if err != nil {
+        return nil
+    }
+    if apiVersion < 0 || apiVersion > 4 {
+        response = append(response, []byte{0, 35}...) // error code '35'
+    } else {
+        response = append(response, []byte{0, 0}...) // error code '0'
+    }
+
+    response = append(response, []byte{2}...)          // one entry
+    response = append(response, []byte{0, 18}...)      // apikey
+    response = append(response, []byte{0, 0}...)       // min version 0
+    response = append(response, []byte{0, 4}...)       // max version 4
+    response = append(response, []byte{0}...)          // Tag Buffer
+    response = append(response, []byte{0, 0, 0, 0}...) // throttle_time_ms
+    response = append(response, []byte{0}...)          // Tag Buffer
+    return response
+
+}
