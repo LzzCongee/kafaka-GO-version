@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	
 	"encoding/binary"
 )
 
